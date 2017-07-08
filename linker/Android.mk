@@ -57,6 +57,10 @@ endif
 # We need to access Bionic private headers in the linker.
 LOCAL_CFLAGS += -I$(LOCAL_PATH)/../libc/
 
+ifneq ($(LINKER_FORCED_SHIM_LIBS),)
+    LOCAL_CFLAGS += -DFORCED_SHIM_LIBS="\"$(LINKER_FORCED_SHIM_LIBS)\""
+endif
+
 # we don't want crtbegin.o (because we have begin.o), so unset it
 # just for this module
 LOCAL_NO_CRT := true
