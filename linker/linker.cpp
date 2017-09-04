@@ -60,6 +60,9 @@
 #include "linker_relocs.h"
 #include "linker_reloc_iterators.h"
 #include "linker_utils.h"
+#ifdef ENABLE_NON_PIE_SUPPORT
+#include "linker_non_pie.h"
+#endif
 
 #include "android-base/strings.h"
 #include "ziparchive/zip_archive.h"
@@ -2316,6 +2319,9 @@ static void soinfo_unload(soinfo* soinfos[], size_t count) {
         if (local_unload_list.contains(child)) {
           continue;
         } else if (child->is_linked() && child->get_local_group_root() != root) {
+          child->get_parents().remove_if([&] (const soinfo* parent) {
+            return parent == si;
+          });
           external_unload_list.push_back(child);
         } else {
           unload_list.push_front(child);
@@ -3148,6 +3154,41 @@ bool soinfo::relocate(const VersionTracker& version_tracker, ElfRelIteratorT&& r
          * R_ARM_COPY may only appear in executable objects where e_type is
          * set to ET_EXEC.
          */
+#ifdef ENABLE_NON_PIE_SUPPORT
+        if (allow_non_pie(get_realpath())) {
+          if ((flags_ & FLAG_EXE) == 0) {
+            DL_ERR("%s R_ARM_COPY relocations only supported for ET_EXEC", get_realpath());
+            return false;
+          }
+          count_relocation(kRelocCopy);
+          MARK(rel->r_offset);
+          TRACE_TYPE(RELO, "RELO %08x <- %d @ %08x %s", reloc, s->st_size, sym_addr, sym_name);
+          if (reloc == sym_addr) {
+            const ElfW(Sym)* src = nullptr;
+
+            if (!soinfo_do_lookup(NULL, sym_name, vi, &lsi, global_group, local_group, &src)) {
+              DL_ERR("%s R_ARM_COPY relocation source cannot be resolved", get_realpath());
+              return false;
+            }
+            if (lsi->has_DT_SYMBOLIC) {
+              DL_ERR("%s invalid R_ARM_COPY relocation against DT_SYMBOLIC shared "
+                     "library %s (built with -Bsymbolic?)", get_realpath(), lsi->soname_);
+              return false;
+            }
+            if (s->st_size < src->st_size) {
+              DL_ERR("%s R_ARM_COPY relocation size mismatch (%d < %d)",
+                     get_realpath(), s->st_size, src->st_size);
+              return false;
+            }
+            memcpy(reinterpret_cast<void*>(reloc),
+                   reinterpret_cast<void*>(src->st_value + lsi->load_bias), src->st_size);
+          } else {
+            DL_ERR("%s R_ARM_COPY relocation target cannot be resolved", get_realpath());
+            return false;
+          }
+          break;
+        }
+#endif
         DL_ERR("%s R_ARM_COPY relocations are not supported", get_realpath());
         return false;
 #elif defined(__i386__)
@@ -4355,11 +4396,20 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args, ElfW(
   }
   si->dynamic = nullptr;
 
+#ifdef ENABLE_NON_PIE_SUPPORT
+  if (allow_non_pie(executable_path)) {
+    DL_WARN("Non position independent executable (non PIE) allowed: %s",
+            executable_path);
+  } else {
+#endif
   ElfW(Ehdr)* elf_hdr = reinterpret_cast<ElfW(Ehdr)*>(si->base);
   if (elf_hdr->e_type != ET_DYN) {
     __libc_fatal("\"%s\": error: only position independent executables (PIE) are supported.",
                  args.argv[0]);
   }
+#ifdef ENABLE_NON_PIE_SUPPORT
+  }
+#endif
 
   // Use LD_LIBRARY_PATH and LD_PRELOAD (but only if we aren't setuid/setgid).
   parse_LD_LIBRARY_PATH(ldpath_env);

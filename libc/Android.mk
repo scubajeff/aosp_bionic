@@ -621,6 +621,10 @@ ifeq ($(TARGET_ARCH),$(filter $(TARGET_ARCH),mips mips64))
   use_clang := false
 endif
 
+ifeq ($(TARGET_NEEDS_GCC_LIBC),true)
+  use_clang := false
+endif
+
 ifeq ($(use_clang),)
   use_clang := true
 endif
@@ -638,6 +642,10 @@ endif
 
 libc_malloc_src := bionic/jemalloc_wrapper.cpp
 libc_common_c_includes += external/jemalloc/include
+
+ifeq ($(BOARD_USES_LEGACY_MMAP),true)
+  libc_common_cflags += -DLEGACY_MMAP
+endif
 
 # Define some common conlyflags
 libc_common_conlyflags := \
